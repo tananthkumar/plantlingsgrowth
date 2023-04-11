@@ -1,0 +1,144 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
+import zipfile
+zip_ref = zipfile.ZipFile("/content/Palm Tree.zip", 'r')
+zip_ref.extractall("/tmp")
+zip_ref.close()
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report
+
+# Load the dataset
+train_ds = tf.keras.preprocessing.image_dataset_from_directory(
+    "/content/drive/MyDrive/Colab Notebooks/Palm Tree",
+    validation_split=0.2,
+    subset="training",
+    seed=123,
+    image_size=(128, 128),
+    batch_size=32,
+),
+val_ds = tf.keras.preprocessing.image_dataset_from_directory(
+    "/content/drive/MyDrive/Colab Notebooks/Palm Tree ",
+    validation_split=0.2,
+    subset="validation",
+    seed=123,
+    image_size=(128, 128),
+    batch_size=32,
+)
+
+#Modified GAP layer
+class ModifiedGAP(layers.Layer):
+    def __init__(self, epsilon=1e-7, **kwargs):
+        super(ModifiedGAP, self).__init__(**kwargs)
+        self.epsilon = epsilon
+        
+    def call(self, inputs):
+        # Compute the mean of each feature map along the height and width dimensions
+        pool = tf.reduce_mean(inputs, axis=[1, 2], keepdims=True)
+        # Compute the standard deviation of each feature map along the height and width dimensions
+        std = tf.sqrt(tf.reduce_mean(tf.square(inputs - pool), axis=[1, 2], keepdims=True) + self.epsilon)
+        # Normalize the inputs using the mean and standard deviation
+        normalized = (inputs - pool) / std
+        # Concatenate the normalized features and the pooled features along the channel dimension
+        output = tf.concat([normalized, pool], axis=3)
+        return output
+
+
+# Define the model
+model = keras.Sequential(
+    [
+        layers.experimental.preprocessing.Rescaling(1./255, input_shape=(128, 128, 3)),
+        layers.Conv2D(16, 3, padding='same', activation='relu'),
+        layers.MaxPooling2D(),
+        layers.Conv2D(32, 3, padding='same', activation='relu'),
+        layers.MaxPooling2D(),
+        layers.Conv2D(64, 3, padding='same', activation='relu'),
+        layers.MaxPooling2D(),
+        ModifiedGAP(),
+        layers.Dropout(0.5),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(1, activation='sigmoid'),
+    ]
+)
+
+# Compile the model
+model.compile(
+    optimizer='adam',
+    loss=tf.keras.losses.BinaryCrossentropy(),
+    metrics=['accuracy'],
+)
+
+# Train the model
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=10,
+)
+
+# Plot the training and validation accuracy
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+epochs_range = range(1, len(history.epoch) + 1)
+plt.figure(figsize=(12, 4))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epoch')
+
+# Plot the training and validation loss
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.xlabel('Epoch')
+plt.show()
+# Save the model
+model.save('/path/to/save/model')
+
+# Test the model
+test_ds = tf.keras.preprocessing.image_dataset_from_directory(
+    "/path/to/test/dataset",
+    image_size=(128, 128),
+    batch_size=32,
+)
+test_loss, test_acc = model.evaluate(test_ds)
+print('Test accuracy:', test_acc)
+
+# Compute the classification report
+y_true = []
+y_pred = []
+for images, labels in test_ds:
+    y_true += labels.numpy().tolist()
+    y_pred += model.predict(images).round().astype('int32').tolist()
+print(classification_report(y_true, y_pred))
+
+# Make predictions
+y_pred = model.predict(test_ds)
+y_true = test_ds.classes
+
+# Calculate performance metrics
+report = classification_report(y_true, y_pred.round())
+conf_matrix = confusion_matrix(y_true, y_pred.round())
+accuracy = (conf_matrix[0][0] + conf_matrix[1][1]) / sum(sum(conf_matrix))
+precision = conf_matrix[1][1] / (conf_matrix[1][1] + conf_matrix[0][1])
+recall = conf_matrix[1][1] / (conf_matrix[1][1] + conf_matrix[1][0])
+f1_score = 2 * (precision * recall) / (precision + recall)
+
+print("Classification report:")
+print(report)
+print("Confusion matrix:")
+print(conf_matrix)
+print("Accuracy:", accuracy)
+print("Precision:", precision)
+print("Recall:", recall)
+print("F1 score:", f1_score)
